@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper for watcher.py
+# - Creates/uses a local virtualenv in .venv
+# - Installs/updates dependencies from requirements.txt
+# - Runs the Python CLI with all passed arguments
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
+VENV_DIR="$ROOT_DIR/.venv"
+REQ_FILE="$ROOT_DIR/requirements.txt"
+MAIN_PY="$ROOT_DIR/watcher.py"
+
+if [[ ! -f "$MAIN_PY" ]]; then
+  echo "Error: watcher.py not found (expected at $MAIN_PY)" >&2
+  exit 1
+fi
+
+if [[ ! -f "$REQ_FILE" ]]; then
+  echo "Error: requirements.txt not found (expected at $REQ_FILE)" >&2
+  exit 1
+fi
+
+find_python() {
+  local candidates=(python3.13 python3 python)
+  for py in "${candidates[@]}"; do
+    if command -v "$py" >/dev/null 2>&1; then
+      if "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)'; then
+        echo "$py"
+        return 0
+      fi
+    fi
+  done
+  return 1
+}
+
+PY_BIN="$(find_python || true)"
+if [[ -z "${PY_BIN:-}" ]]; then
+  echo "Error: Python 3.10+ not found. Please install Python >=3.10 (3.13 recommended)." >&2
+  exit 1
+fi
+
+# Create venv if missing
+if [[ ! -d "$VENV_DIR" ]]; then
+  echo "Creating virtual environment at $VENV_DIR"
+  "$PY_BIN" -m venv "$VENV_DIR"
+fi
+
+VENV_PY="$VENV_DIR/bin/python"
+VENV_PIP="$VENV_DIR/bin/pip"
+
+# Ensure pip is up to date inside the venv (avoid PEP 668 issues)
+"$VENV_PY" -m pip install --upgrade pip >/dev/null
+
+# Install/Update requirements (use --upgrade to pick up requirement changes)
+echo "Installing/Updating dependencies from $REQ_FILE"
+"$VENV_PY" -m pip install --upgrade -r "$REQ_FILE"
+
+# Activate venv for the duration of this script
+set +u
+source "$VENV_DIR/bin/activate"
+trap 'deactivate >/dev/null 2>&1 || true' EXIT
+set -u
+
+# Pass all arguments to the Python CLI
+exec "$VENV_PY" "$MAIN_PY" "$@"

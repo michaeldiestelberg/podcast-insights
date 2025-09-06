@@ -1,0 +1,28 @@
+# Example configuration for Podcast Insights
+# Copy this file to `config.yaml` and adjust paths and feeds.
+
+storage:
+  data_dir: ./data
+  temp_dir: ./data/_tmp
+
+runtime:
+  poll_interval_minutes: 30
+  max_retries: 3
+  retry_backoff_seconds: 5
+  sequential: true
+  # Process only the newest episode per feed per cycle during initial testing
+  max_new_per_feed: 1
+
+tools:
+  # Adjust these paths to where you cloned the tools
+  # Transcription tool: https://github.com/michaeldiestelberg/local-podcast-transcription
+  transcribe_cmd: "/path/to/local-podcast-transcription/transcribe.sh \"{audio}\" -o \"{transcript}\""
+  # Insights tool: https://github.com/michaeldiestelberg/ai-cli
+  insights_cmd: "/path/to/ai-cli/ai-prompt --prompt \"{transcript}\" --system-prompt podcast-insights --output-path \"{episode_dir}\" --output-name \"{insights_file}\" --model gpt-5-mini"
+
+feeds:
+  # Replace or add feeds to monitor. Examples:
+  - url: https://feeds.megaphone.fm/hubermanlab
+    name: Huberman Lab
+  - url: https://api.substack.com/feed/podcast/10845.rss
+    name: How I AI

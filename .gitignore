@@ -1,0 +1,16 @@
+# Local virtual environment
+.venv/
+
+# Local data and logs
+data/
+logs/
+
+# Local state database
+state.db
+
+# Python cache and macOS artifacts
+__pycache__/
+.DS_Store
+
+# Local config (keep only example in repo)
+config.yaml
