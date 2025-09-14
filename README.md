@@ -2,6 +2,8 @@
 
 An interactive terminal application for browsing podcast RSS feeds, downloading episodes, transcribing audio to Markdown, and extracting insights — all on your Mac.
 
+![Podcast Insights Library](docs/podcast-insights_library.png)
+
 ## Features
 
 - 📻 Browse multiple podcast RSS feeds in a clean terminal interface
