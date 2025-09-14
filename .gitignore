@@ -1,16 +1,54 @@
 # Local virtual environment
 .venv/
+venv/
+env/
 
 # Local data and logs
 data/
 logs/
+*.log
 
 # Local state database
 state.db
+*.db-journal
+*.db-wal
 
-# Python cache and macOS artifacts
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # Local config (keep only example in repo)
 config.yaml
+
+# Temporary files
+*.tmp
+*.bak
+.cache/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation builds
+docs/_build/

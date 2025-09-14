@@ -6,12 +6,8 @@ storage:
   temp_dir: ./data/_tmp
 
 runtime:
-  poll_interval_minutes: 30
   max_retries: 3
   retry_backoff_seconds: 5
-  sequential: true
-  # Process only the newest episode per feed per cycle during initial testing
-  max_new_per_feed: 1
 
 tools:
   # Adjust these paths to where you cloned the tools

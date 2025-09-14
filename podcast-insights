@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Wrapper for watcher.py
+# Wrapper for Podcast Insights
 # - Creates/uses a local virtualenv in .venv
 # - Installs/updates dependencies from requirements.txt
-# - Runs the Python CLI with all passed arguments
+# - Runs the interactive interface
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 VENV_DIR="$ROOT_DIR/.venv"
 REQ_FILE="$ROOT_DIR/requirements.txt"
-MAIN_PY="$ROOT_DIR/watcher.py"
+MAIN_PY="$ROOT_DIR/interactive.py"
 
 if [[ ! -f "$MAIN_PY" ]]; then
-  echo "Error: watcher.py not found (expected at $MAIN_PY)" >&2
+  echo "Error: interactive.py not found (expected at $MAIN_PY)" >&2
   exit 1
 fi
 
@@ -63,5 +63,5 @@ source "$VENV_DIR/bin/activate"
 trap 'deactivate >/dev/null 2>&1 || true' EXIT
 set -u
 
-# Pass all arguments to the Python CLI
+# Run the interactive interface
 exec "$VENV_PY" "$MAIN_PY" "$@"

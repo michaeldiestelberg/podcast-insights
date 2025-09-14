@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import argparse
 import contextlib
 import datetime as dt
 import hashlib
@@ -7,7 +6,6 @@ import logging
 import os
 import re
 import shutil
-import signal
 import sqlite3
 import subprocess
 import sys
@@ -16,7 +14,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import feedparser  # type: ignore
 import requests
 import yaml
 
@@ -48,11 +45,8 @@ class StorageConfig:
 
 @dataclass
 class RuntimeConfig:
-    poll_interval_minutes: int = 30
     max_retries: int = 3
     retry_backoff_seconds: int = 5
-    sequential: bool = True
-    max_new_per_feed: Optional[int] = 1
 
 
 @dataclass
@@ -86,11 +80,8 @@ def load_config(path: Path) -> AppConfig:
 
     runtime_dict = cfg.get("runtime", {})
     runtime = RuntimeConfig(
-        poll_interval_minutes=int(runtime_dict.get("poll_interval_minutes", 30)),
         max_retries=int(runtime_dict.get("max_retries", 3)),
         retry_backoff_seconds=int(runtime_dict.get("retry_backoff_seconds", 5)),
-        sequential=bool(runtime_dict.get("sequential", True)),
-        max_new_per_feed=runtime_dict.get("max_new_per_feed"),
     )
 
     tools = ToolsConfig(
@@ -265,30 +256,6 @@ class DB:
             raise KeyError(f"Episode not found: {episode_id}")
         return row
 
-    def iter_new_or_incomplete(self, feed_id: int, max_new: Optional[int] = None) -> List[sqlite3.Row]:
-        cur = self.conn.cursor()
-        # Process new and incomplete in order: new -> downloading -> downloaded -> transcribing -> transcribed -> analyzing
-        cur.execute(
-            """
-            SELECT * FROM episodes
-            WHERE feed_id = ? AND status IN ('new','downloading','downloaded','transcribing','transcribed','analyzing','error_download','error_transcribe','error_insights')
-            ORDER BY first_seen_at ASC
-            """,
-            (feed_id,),
-        )
-        rows = cur.fetchall()
-        if max_new is None:
-            return list(rows)
-        # Cap how many episodes we start from 'new' status for this cycle
-        selected = []
-        new_count = 0
-        for r in rows:
-            if r["status"] == "new":
-                if new_count >= max_new:
-                    continue
-                new_count += 1
-            selected.append(r)
-        return selected
 
 
 # --------------- Helpers ---------------
@@ -376,174 +343,7 @@ class Watcher:
         ensure_dir(self.cfg.storage.data_dir)
         ensure_dir(self.cfg.storage.temp_dir)
         self.db = DB(Path.cwd())
-        self._stop = False
 
-    def stop(self, *args: Any) -> None:
-        logging.info("Received stop signal; will stop after current step.")
-        self._stop = True
-
-    def run_loop(self) -> None:
-        signal.signal(signal.SIGINT, self.stop)
-        signal.signal(signal.SIGTERM, self.stop)
-        while not self._stop:
-            self.poll_once()
-            if self._stop:
-                break
-            interval = self.cfg.runtime.poll_interval_minutes
-            logging.info("Sleeping %d minutes before next poll...", interval)
-            for _ in range(interval * 60):
-                if self._stop:
-                    break
-                time.sleep(1)
-
-    def poll_once(self) -> None:
-        for feed_cfg in self.cfg.feeds:
-            if self._stop:
-                break
-            try:
-                self._process_feed(feed_cfg)
-            except Exception as e:
-                logging.exception("Error processing feed %s: %s", feed_cfg.url, e)
-
-    def _process_feed(self, feed_cfg: FeedConfig) -> None:
-        logging.info("Polling feed: %s", feed_cfg.url)
-
-        # Fetch with conditional headers via feedparser
-        etag, last_mod = self.db.fetch_feed_http_cache(feed_cfg.url)
-        parsed = feedparser.parse(feed_cfg.url, etag=etag, modified=last_mod)  # network call
-
-        # Handle 304 Not Modified: still process any pending episodes
-        status_code = getattr(parsed, "status", None)
-        if status_code == 304:
-            logging.info("No changes for %s (304)", feed_cfg.url)
-            feed_id = self.db.upsert_feed(feed_cfg.url, feed_cfg.name, None)
-            episodes = self.db.iter_new_or_incomplete(feed_id, self.cfg.runtime.max_new_per_feed)
-            for ep in episodes:
-                if self._stop:
-                    break
-                self._process_episode(ep)
-            return
-
-        # Extract feed title and set slug
-        feed_title = (
-            feed_cfg.name
-            or getattr(parsed.feed, "title", None)
-            or feed_cfg.url
-        )
-        feed_slug = safe_name(feed_title)
-        feed_id = self.db.upsert_feed(feed_cfg.url, feed_title, feed_slug)
-
-        # Update ETag and Last-Modified
-        new_etag = getattr(parsed, "etag", None)
-        new_modified = getattr(parsed, "modified", None)
-        self.db.update_feed_http(feed_id, new_etag, new_modified)
-
-        # Build base dir for this feed
-        feed_dir = self.cfg.storage.data_dir / feed_slug
-        ensure_dir(feed_dir)
-
-        # Iterate entries
-        entries = list(getattr(parsed, "entries", []))
-        if not entries:
-            logging.info("No entries in feed: %s", feed_cfg.url)
-            return
-
-        # Newest-first ordering for one-shot and typical runs
-        try:
-            entries.sort(
-                key=lambda e: entry_datetime(e) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
-                reverse=True,
-            )
-        except Exception:
-            # If any sorting error occurs, keep feed order (usually newest-first)
-            pass
-
-        added_count = 0
-        for entry in entries:
-            if self._stop:
-                break
-            guid = entry_guid(entry)
-            audio = select_enclosure(entry)
-            title = getattr(entry, "title", None) or "Untitled Episode"
-            pubdate = entry_pubdate(entry)
-
-            if not audio:
-                logging.debug("Skipping entry without audio: %s", title)
-                continue
-
-            # Skip if already known
-            existing = self.db.find_episode(feed_id, guid, audio)
-            if existing:
-                continue
-
-            # Cap how many to add this cycle
-            max_new = self.cfg.runtime.max_new_per_feed
-            if max_new is not None and added_count >= max_new:
-                continue
-
-            # Compute episode dir and paths
-            episode_dir_name = f"{pubdate}_{safe_name(title)}"
-            episode_dir = feed_dir / episode_dir_name
-            audio_file = f"{safe_name(title)}.mp3"
-            transcript_file = f"{safe_name(title)}.transcript.md"
-            insights_file = f"{safe_name(title)}.insights.md"
-
-            audio_path = episode_dir / audio_file
-            transcript_path = episode_dir / transcript_file
-            insights_path = episode_dir / insights_file
-
-            self.db.insert_episode(
-                feed_id=feed_id,
-                guid=guid,
-                audio_url=audio,
-                title=title,
-                pub_date=pubdate,
-                episode_dir=episode_dir,
-                audio_path=audio_path,
-                transcript_path=transcript_path,
-                insights_path=insights_path,
-            )
-            added_count += 1
-
-        # Process sequentially any new/incomplete episodes
-        episodes = self.db.iter_new_or_incomplete(feed_id, self.cfg.runtime.max_new_per_feed)
-        for ep in episodes:
-            if self._stop:
-                break
-            self._process_episode(ep)
-
-    def _process_episode(self, ep: sqlite3.Row) -> None:
-        episode_id = int(ep["id"])
-        # Always reload the latest DB row to avoid stale status within a single pass
-        row = self.db.get_episode_by_id(episode_id)
-        episode_dir = Path(row["episode_dir"])
-        audio_path = Path(row["audio_path"])
-        transcript_path = Path(row["transcript_path"])
-        insights_path = Path(row["insights_path"])
-
-        ensure_dir(episode_dir)
-
-        # Download stage
-        if not audio_path.exists():
-            self.db.update_episode_status(episode_id, "downloading")
-            self._download_audio(row["audio_url"], audio_path)
-        self.db.update_episode_status(episode_id, "downloaded")
-
-        # Transcription stage
-        if not transcript_path.exists():
-            self.db.update_episode_status(episode_id, "transcribing")
-            self._run_transcription(audio_path, transcript_path)
-            if not transcript_path.exists():
-                raise RuntimeError(f"Transcription did not produce expected file: {transcript_path}")
-        self.db.update_episode_status(episode_id, "transcribed")
-
-        # Insights stage
-        if not insights_path.exists():
-            self.db.update_episode_status(episode_id, "analyzing")
-            self._run_insights(transcript_path, insights_path)
-            if not insights_path.exists():
-                raise RuntimeError(f"Insights extraction did not produce expected file: {insights_path}")
-        self.db.update_episode_status(episode_id, "done")
 
     # --------------- Actions ---------------
     def _download_audio(self, url: str, dest: Path) -> None:
@@ -609,40 +409,3 @@ def run_cmd(cmd: str, cwd: Optional[Path]) -> None:
     proc = subprocess.run(cmd, shell=True, cwd=cwd)
     if proc.returncode != 0:
         raise RuntimeError(f"Command failed ({proc.returncode}): {cmd}")
-
-
-# --------------- CLI ---------------
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Podcast Insights pipeline")
-    p.add_argument("command", choices=["run", "poll-once", "status"], help="Command to run")
-    p.add_argument("--config", default="config.yaml", help="Path to YAML config")
-    return p.parse_args()
-
-
-def print_status(db: DB) -> None:
-    cur = db.conn.cursor()
-    cur.execute("SELECT COUNT(*) FROM feeds")
-    feeds = cur.fetchone()[0]
-    cur.execute("SELECT status, COUNT(*) as c FROM episodes GROUP BY status ORDER BY status")
-    eps = cur.fetchall()
-    logging.info("Feeds: %d", feeds)
-    for r in eps:
-        logging.info("%s: %d", r["status"], r["c"])
-
-
-def main() -> None:
-    args = parse_args()
-    cfg = load_config(Path(args.config))
-    setup_logging(Path.cwd())
-    watcher = Watcher(cfg)
-    if args.command == "run":
-        watcher.run_loop()
-    elif args.command == "poll-once":
-        watcher.poll_once()
-    elif args.command == "status":
-        print_status(watcher.db)
-
-
-if __name__ == "__main__":
-    main()
