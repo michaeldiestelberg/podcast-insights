@@ -159,6 +159,14 @@ feeds:
     name: Example Podcast
 ```
 
+### Finding RSS Feeds
+
+To find RSS feed URLs for your favorite podcasts:
+1. Visit [pod.link](https://pod.link/)
+2. Search for your podcast by name
+3. CCopy the feed URL (in the ... menu)
+4. Add it to your `config.yaml`
+
 ### Storage Layout
 
 Episodes are organized by podcast and date:
