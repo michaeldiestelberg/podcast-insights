@@ -1,5 +1,13 @@
 # Example configuration for Podcast Insights
-# Copy this file to `config.yaml` and adjust paths and feeds.
+#
+# IMPORTANT: For new users, run ./setup.sh instead of manually editing this file.
+# The setup wizard will configure everything automatically.
+#
+# For manual installation:
+# 1. Copy this file to `config.yaml`
+# 2. Update the tool paths below
+# 3. Configure API keys in ai-cli's .env file
+# 4. Add your podcast RSS feeds
 
 storage:
   data_dir: ./data
@@ -10,15 +18,45 @@ runtime:
   retry_backoff_seconds: 5
 
 tools:
-  # Adjust these paths to where you cloned the tools
+  # Tool paths - automatically configured by setup.sh
+  # For manual setup, adjust these paths to where you installed the tools
+
   # Transcription tool: https://github.com/michaeldiestelberg/local-podcast-transcription
+  # If using bundled version: ./tools/podcast-transcription/transcribe.sh
   transcribe_cmd: "/path/to/local-podcast-transcription/transcribe.sh \"{audio}\" -o \"{transcript}\""
-  # Insights tool: https://github.com/michaeldiestelberg/ai-cli
+
+  # AI CLI tool: https://github.com/michaeldiestelberg/ai-cli
+  # If using bundled version: ./tools/ai-cli/ai-prompt
+  #
+  # IMPORTANT: Model Selection
+  # Change the --model parameter to switch AI models:
+  #
+  # OpenAI Models (requires OPENAI_API_KEY in ai-cli/.env):
+  #   - gpt-5        (most advanced)
+  #   - gpt-5-mini   (lighter, faster, default)
+  #   - gpt-5-nano   (ultra-light)
+  #   - gpt-4o       (GPT-4 optimized)
+  #   - gpt-4o-mini  (GPT-4 optimized mini)
+  #
+  # Anthropic Claude Models (requires ANTHROPIC_API_KEY in ai-cli/.env):
+  #   - claude-opus-4-1    (most powerful)
+  #   - claude-sonnet-4    (balanced performance)
+  #   - claude-haiku-3-5   (fast & efficient)
+  #   - claude-sonnet-3-5  (previous Sonnet version)
+  #
   insights_cmd: "/path/to/ai-cli/ai-prompt --prompt \"{transcript}\" --system-prompt podcast-insights --output-path \"{episode_dir}\" --output-name \"{insights_file}\" --model gpt-5-mini"
 
 feeds:
-  # Replace or add feeds to monitor. Examples:
+  # Add your podcast RSS feeds here
+  # You can find RSS feed URLs on podcast websites or directories
+
+  # Examples:
   - url: https://feeds.megaphone.fm/hubermanlab
     name: Huberman Lab
+
   - url: https://api.substack.com/feed/podcast/10845.rss
-    name: How I AI
+    name: How I Write
+
+  # Add more feeds:
+  # - url: https://example.com/podcast.rss
+  #   name: My Favorite Podcast

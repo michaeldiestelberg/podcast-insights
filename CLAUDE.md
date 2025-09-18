@@ -4,23 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Core Commands
 
+### Initial Setup
+```bash
+# Automatic setup (recommended)
+git clone --recursive https://github.com/michaeldiestelberg/podcast-insights.git
+cd podcast-insights
+./setup.sh  # Interactive setup wizard
+
+# Manual setup
+cp config.example.yaml config.yaml
+# Edit config.yaml with tool paths and feeds
+```
+
 ### Running the Application
 ```bash
 # Launch the application
 ./podcast-insights
 
+# Update bundled tools
+./podcast-insights --update
+
 # With custom config
 ./podcast-insights --config path/to/config.yaml
-```
-
-### Initial Setup
-```bash
-# Copy and configure
-cp config.example.yaml config.yaml
-# Edit config.yaml with:
-# - Paths to transcription tool (local-podcast-transcription/transcribe.sh)
-# - Paths to insights tool (ai-cli/ai-prompt)
-# - RSS feed URLs
 ```
 
 ## Architecture Overview
@@ -29,9 +34,16 @@ cp config.example.yaml config.yaml
 Single-mode interactive terminal UI for browsing and processing podcast episodes.
 
 **Core Modules:**
-- `interactive.py`: Main application with terminal UI
-- `watcher.py`: Helper functions, database operations, download/processing logic
-- `podcast-insights`: Shell wrapper managing virtualenv
+- `podcast_insights.py`: Main application and TUI controller
+- `database.py`: Database operations (DB and ExtendedDB classes)
+- `models.py`: Configuration and state dataclasses
+- `utils.py`: Helper functions and utilities
+- `processors.py`: Feed and episode processing logic
+- `ui_components.py`: UI rendering components
+- `config_manager.py`: Configuration management and auto-detection
+- `podcast-insights`: Shell wrapper managing virtualenv and updates
+- `setup.sh`: Interactive setup wizard for installation
+- `update.sh`: Tool update script for submodules
 
 ### Processing Pipeline
 User-initiated sequential pipeline: **Select Episode → Download → Transcribe → Extract Insights**
@@ -48,16 +60,29 @@ Each step:
 
 ### UI Architecture
 - `PodcastTUI`: Main controller with view state management
-- `InteractiveWatcher`: Extended watcher with UI callbacks and subprocess suppression
+- `UIRenderer`: Renders UI components and views
+- `FeedProcessor`: Handles RSS feed population
+- `EpisodeProcessor`: Manages episode processing pipeline
 - `ExtendedDB`: Database with pagination and stats queries
 - Processing runs in separate thread with status callbacks
 - Uses Rich library for terminal rendering
 
 ### External Tool Integration
-Shell commands with placeholders:
-- **Transcription**: `{audio}` → `{transcript}`
-- **Insights**: `{transcript}` → `{insights_file}`
+**Bundled as Git Submodules:**
+- `tools/ai-cli/`: AI prompt executor (requires API keys)
+- `tools/podcast-transcription/`: Local transcription tool
+
+**Configuration:**
+- Tools auto-detected from `tools/` directory
+- Falls back to paths in `config.yaml` for manual installations
+- Shell commands with placeholders:
+  - **Transcription**: `{audio}` → `{transcript}`
+  - **Insights**: `{transcript}` → `{insights_file}` with `--model` parameter
 - Output captured to prevent UI pollution
+
+**Requirements:**
+- ffmpeg (checked during setup)
+- API keys for OpenAI or Anthropic (configured via setup.sh)
 
 ### Storage Layout
 ```
@@ -89,12 +114,24 @@ data/
 
 ## Testing Approach
 
-Manual testing workflow:
+### Setup Testing
+1. Run `./setup.sh` and test both installation modes:
+   - Automatic: Verify submodules clone and configure
+   - Manual: Test path input and validation
+2. Verify API key configuration and model selection
+3. Check generated `config.yaml` has correct paths and model
+
+### Application Testing
 1. Launch with `./podcast-insights`
 2. Navigate podcast list with number + Enter
 3. Browse episodes, test pagination with 'l'
 4. Process an episode and verify output in `data/`
 5. Test ESC navigation and quit confirmation
+
+### Update Testing
+1. Run `./podcast-insights --update` to update tools
+2. Verify submodules pull latest changes
+3. Check dependency updates when requirements change
 
 For UI changes, verify:
 - Number input handling (single/multi-digit)

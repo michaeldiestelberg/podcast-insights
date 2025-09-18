@@ -5,12 +5,24 @@ set -euo pipefail
 # - Creates/uses a local virtualenv in .venv
 # - Installs/updates dependencies from requirements.txt
 # - Runs the interactive interface
+# - Supports --update flag to update bundled tools
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 ROOT_DIR="$SCRIPT_DIR"
 VENV_DIR="$ROOT_DIR/.venv"
 REQ_FILE="$ROOT_DIR/requirements.txt"
-MAIN_PY="$ROOT_DIR/interactive.py"
+MAIN_PY="$ROOT_DIR/podcast_insights.py"
+UPDATE_SCRIPT="$ROOT_DIR/update.sh"
+
+# Check for --update flag
+if [[ "${1:-}" == "--update" ]]; then
+  if [[ -f "$UPDATE_SCRIPT" ]]; then
+    exec "$UPDATE_SCRIPT"
+  else
+    echo "Error: update.sh not found. Please run ./setup.sh first." >&2
+    exit 1
+  fi
+fi
 
 if [[ ! -f "$MAIN_PY" ]]; then
   echo "Error: interactive.py not found (expected at $MAIN_PY)" >&2

@@ -1,0 +1,6 @@
+[submodule "tools/ai-cli"]
+	path = tools/ai-cli
+	url = https://github.com/michaeldiestelberg/ai-cli.git
+[submodule "tools/podcast-transcription"]
+	path = tools/podcast-transcription
+	url = https://github.com/michaeldiestelberg/local-podcast-transcription.git
