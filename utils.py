@@ -7,7 +7,7 @@ import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import yaml
 
@@ -149,3 +149,79 @@ def run_cmd(cmd: str, cwd: Optional[Path] = None) -> None:
     proc = subprocess.run(cmd, shell=True, cwd=cwd)
     if proc.returncode != 0:
         raise RuntimeError(f"Command failed ({proc.returncode}): {cmd}")
+
+
+def parse_episode_selection(input_str: str, max_index: int) -> List[int]:
+    """Parse episode selection input into list of 0-based indices.
+
+    Supports:
+    - Single numbers: "3" -> [2]
+    - Comma-separated: "1,3,5" -> [0, 2, 4]
+    - Ranges: "1-5" -> [0, 1, 2, 3, 4]
+    - Mixed: "1,3-5,8" -> [0, 2, 3, 4, 7]
+    - All: "all" -> [0, 1, ..., max_index-1]
+
+    Args:
+        input_str: User input string
+        max_index: Total number of episodes (1-based count)
+
+    Returns:
+        Sorted list of unique 0-based indices
+
+    Raises:
+        ValueError: If input is invalid or indices out of range
+    """
+    input_str = input_str.strip().lower()
+
+    if not input_str:
+        raise ValueError("Empty input")
+
+    # Handle "all" keyword
+    if input_str == "all":
+        return list(range(max_index))
+
+    indices = []
+
+    # Split by comma and process each part
+    for part in input_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+
+        if "-" in part:
+            # Range: "1-5"
+            range_parts = part.split("-")
+            if len(range_parts) != 2:
+                raise ValueError(f"Invalid range format: {part}")
+
+            try:
+                start = int(range_parts[0].strip())
+                end = int(range_parts[1].strip())
+            except ValueError:
+                raise ValueError(f"Invalid range numbers: {part}")
+
+            if start > end:
+                raise ValueError(f"Invalid range (start > end): {part}")
+
+            # Convert to 0-based and add all in range
+            for i in range(start, end + 1):
+                indices.append(i - 1)
+        else:
+            # Single number
+            try:
+                num = int(part)
+            except ValueError:
+                raise ValueError(f"Invalid number: {part}")
+
+            # Convert to 0-based
+            indices.append(num - 1)
+
+    # Remove duplicates and sort
+    indices = sorted(set(indices))
+
+    # Validate all indices are in range
+    for idx in indices:
+        if idx < 0 or idx >= max_index:
+            raise ValueError(f"Episode number out of range: {idx + 1}")
+
+    return indices

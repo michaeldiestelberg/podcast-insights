@@ -103,16 +103,26 @@ The wrapper script automatically:
 
 **Episode List:**
 - View episodes with processing status
-- Type number + Enter to process an episode
+- Type number + Enter to select an episode
+- Select multiple: `1,3,5` (comma-separated), `1-5` (range), or `all`
 - Press `l` to load more episodes
 - Press `ESC` to go back
 - Press `q` to quit
 
-**Processing:**
-- Watch real-time progress through three stages:
-  1. 📥 Download audio
-  2. 📝 Transcribe audio
-  3. 🧠 Extract insights
+**Processing Modes:**
+After selecting episode(s), choose a processing mode:
+- **[1] Full processing**: Download + Transcribe + Extract insights
+- **[2] Transcribe only**: Download + Transcribe (no insights - saves API costs)
+- **[1] Extract insights**: For already-transcribed episodes, add insights later
+
+**Bulk Processing:**
+- Select multiple episodes with ranges or "all"
+- Episodes are processed sequentially
+- Compact progress UI shows current episode and completion count
+- Skipped episodes (already done) are shown before processing
+
+**Processing View:**
+- Watch real-time progress through the selected stages
 - Results are saved to the data directory
 
 ## Configuration

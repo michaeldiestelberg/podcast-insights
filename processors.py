@@ -194,6 +194,100 @@ class EpisodeProcessor(BaseProcessor):
             if 'thread_db' in locals():
                 thread_db.conn.close()
 
+    def process_transcribe_only(self, episode_id: int) -> Tuple[bool, Optional[str]]:
+        """Process episode: download + transcribe only (no insights)."""
+        thread_db = ExtendedDB(Path.cwd())
+
+        try:
+            row = thread_db.get_episode_by_id(episode_id)
+
+            if self.status_callback:
+                self.status_callback("downloading", row["title"])
+
+            episode_dir = Path(row["episode_dir"])
+            audio_path = Path(row["audio_path"])
+            transcript_path = Path(row["transcript_path"])
+
+            ensure_dir(episode_dir)
+
+            # Download
+            if not audio_path.exists():
+                thread_db.update_episode_status(episode_id, "downloading")
+                self._download_audio(row["audio_url"], audio_path)
+            thread_db.update_episode_status(episode_id, "downloaded")
+
+            if self.status_callback:
+                self.status_callback("transcribing", row["title"])
+
+            # Transcribe
+            if not transcript_path.exists():
+                thread_db.update_episode_status(episode_id, "transcribing")
+                self._run_transcription(audio_path, transcript_path)
+                if not transcript_path.exists():
+                    raise RuntimeError(f"Transcription did not produce expected file: {transcript_path}")
+
+            # Final status: transcribed (NOT done - allows later insights extraction)
+            thread_db.update_episode_status(episode_id, "transcribed")
+
+            if self.status_callback:
+                self.status_callback("done", row["title"])
+
+            return True, None
+
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Error processing episode {episode_id}: {error_msg}")
+            try:
+                thread_db.update_episode_status(episode_id, "error", error_msg)
+            except:
+                pass
+            return False, error_msg
+        finally:
+            if 'thread_db' in locals():
+                thread_db.conn.close()
+
+    def process_insights_only(self, episode_id: int) -> Tuple[bool, Optional[str]]:
+        """Process episode: extract insights only (requires existing transcript)."""
+        thread_db = ExtendedDB(Path.cwd())
+
+        try:
+            row = thread_db.get_episode_by_id(episode_id)
+            transcript_path = Path(row["transcript_path"])
+            insights_path = Path(row["insights_path"])
+
+            # Validate transcript exists
+            if not transcript_path.exists():
+                raise RuntimeError(f"Transcript not found: {transcript_path}")
+
+            if self.status_callback:
+                self.status_callback("analyzing", row["title"])
+
+            # Extract insights
+            if not insights_path.exists():
+                thread_db.update_episode_status(episode_id, "analyzing")
+                self._run_insights(transcript_path, insights_path)
+                if not insights_path.exists():
+                    raise RuntimeError(f"Insights extraction did not produce expected file: {insights_path}")
+
+            thread_db.update_episode_status(episode_id, "done")
+
+            if self.status_callback:
+                self.status_callback("done", row["title"])
+
+            return True, None
+
+        except Exception as e:
+            error_msg = str(e)
+            logging.error(f"Error processing episode {episode_id}: {error_msg}")
+            try:
+                thread_db.update_episode_status(episode_id, "error", error_msg)
+            except:
+                pass
+            return False, error_msg
+        finally:
+            if 'thread_db' in locals():
+                thread_db.conn.close()
+
     def _download_audio(self, url: str, dest: Path) -> None:
         """Download audio file."""
         logging.info("Downloading audio: %s", url)

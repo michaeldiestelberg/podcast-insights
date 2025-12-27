@@ -15,10 +15,10 @@ from rich.live import Live
 from rich.prompt import Prompt
 
 from database import ExtendedDB
-from models import UIState
+from models import ProcessingMode, UIState
 from processors import EpisodeProcessor, FeedProcessor
 from ui_components import UIRenderer
-from utils import load_config, setup_logging
+from utils import load_config, parse_episode_selection, setup_logging
 
 
 console = Console()
@@ -94,29 +94,107 @@ class PodcastTUI:
         return False
 
     def handle_episode_selection(self, selection: str) -> bool:
-        """Handle episode selection from list."""
+        """Handle episode selection - supports single and bulk selection."""
+        # Get all episodes for the feed
+        episodes = self.db.get_episodes_paginated(
+            self.state.selected_feed_id,
+            0,
+            None
+        )
+
+        if not episodes:
+            return False
+
         try:
-            idx = int(selection) - 1
-            episodes = self.db.get_episodes_paginated(
-                self.state.selected_feed_id,
-                0,
-                None
-            )
+            indices = parse_episode_selection(selection, len(episodes))
+        except ValueError:
+            return False
 
-            if 0 <= idx < len(episodes):
-                episode = episodes[idx]
+        if not indices:
+            return False
 
-                if episode["status"] == "done":
-                    self.console.print("[green]Episode already processed![/green]")
-                    time.sleep(1)
-                    return False
+        # Get selected episodes
+        selected_episodes = [episodes[i] for i in indices]
 
-                self.state.selected_episode_id = episode["id"]
-                self.state.processing_episode = episode
-                self.processing_title = episode["title"]
+        if len(selected_episodes) == 1:
+            # Single episode - use existing action menu flow
+            episode = selected_episodes[0]
+
+            if episode["status"] == "done":
+                self.console.print("[green]Episode already fully processed![/green]")
+                time.sleep(1)
+                return False
+
+            self.state.selected_episode_id = episode["id"]
+            self.state.processing_episode = episode
+            self.processing_title = episode["title"]
+            self.state.current_view = "action_menu"
+            return True
+
+        # Bulk selection - store all selected episodes
+        self.state.bulk_episode_ids = [ep["id"] for ep in selected_episodes]
+        self.state.bulk_episodes = selected_episodes
+        self.state.bulk_current_index = 0
+        self.state.bulk_completed_count = 0
+        self.state.current_view = "bulk_action_menu"
+        return True
+
+    def handle_action_selection(self, key: str) -> bool:
+        """Handle action selection from action menu."""
+        episode = self.state.processing_episode
+        status = episode["status"]
+
+        if status in ("new", "error", "downloading", "downloaded", "transcribing"):
+            if key == "1":
+                self.state.processing_mode = ProcessingMode.FULL
                 return True
-        except (ValueError, IndexError):
-            pass
+            elif key == "2":
+                self.state.processing_mode = ProcessingMode.TRANSCRIBE
+                return True
+        elif status == "transcribed":
+            if key == "1":
+                self.state.processing_mode = ProcessingMode.INSIGHTS
+                return True
+
+        return False
+
+    def handle_bulk_action_selection(self, key: str) -> bool:
+        """Handle action selection for bulk processing."""
+        episodes = self.state.bulk_episodes
+
+        # Categorize episodes by status
+        processable = []  # new, error, downloading, downloaded, transcribing
+        transcribed = []  # transcribed only
+        done = []  # already done
+
+        for ep in episodes:
+            status = ep["status"]
+            if status == "done":
+                done.append(ep)
+            elif status == "transcribed":
+                transcribed.append(ep)
+            else:
+                processable.append(ep)
+
+        # Determine mode and skipped based on key
+        if key == "1":
+            if processable:
+                # Full processing mode
+                self.state.processing_mode = ProcessingMode.FULL
+                self.state.bulk_skipped_episodes = done
+                return True
+            elif transcribed:
+                # Insights only mode (when only transcribed episodes)
+                self.state.processing_mode = ProcessingMode.INSIGHTS
+                self.state.bulk_skipped_episodes = done
+                return True
+        elif key == "2":
+            if processable:
+                # Transcribe only mode
+                self.state.processing_mode = ProcessingMode.TRANSCRIBE
+                # Skip done and already transcribed
+                self.state.bulk_skipped_episodes = done + transcribed
+                return True
 
         return False
 
@@ -152,15 +230,21 @@ class PodcastTUI:
                 self.state.episode_limit += 5
 
     def process_episode(self):
-        """Process selected episode."""
+        """Process selected episode based on selected mode."""
         if not self.state.selected_episode_id:
             return
 
         # Clear the console once at the start
         self.console.clear()
 
-        # Initialize processing status
-        self.processing_status = "downloading"
+        mode = self.state.processing_mode or ProcessingMode.FULL
+        mode_str = mode.value
+
+        # Initialize processing status based on mode
+        if mode == ProcessingMode.INSIGHTS:
+            self.processing_status = "analyzing"
+        else:
+            self.processing_status = "downloading"
 
         # Run processing in a separate thread
         success = False
@@ -168,16 +252,25 @@ class PodcastTUI:
 
         def process():
             nonlocal success, error_msg
-            success, error_msg = self.episode_processor.process_single_episode(
-                self.state.selected_episode_id
-            )
+            if mode == ProcessingMode.FULL:
+                success, error_msg = self.episode_processor.process_single_episode(
+                    self.state.selected_episode_id
+                )
+            elif mode == ProcessingMode.TRANSCRIBE:
+                success, error_msg = self.episode_processor.process_transcribe_only(
+                    self.state.selected_episode_id
+                )
+            elif mode == ProcessingMode.INSIGHTS:
+                success, error_msg = self.episode_processor.process_insights_only(
+                    self.state.selected_episode_id
+                )
 
         thread = threading.Thread(target=process)
         thread.start()
 
-        # Use Live for smooth updates
+        # Use Live for smooth updates with mode-aware rendering
         with Live(
-            self.ui_renderer.render_processing(self.processing_status, self.processing_title),
+            self.ui_renderer.render_processing(self.processing_status, self.processing_title, processing_mode=mode_str),
             console=self.console,
             refresh_per_second=2,
             vertical_overflow="visible"
@@ -187,7 +280,8 @@ class PodcastTUI:
                 live.update(self.ui_renderer.render_processing(
                     self.processing_status,
                     self.processing_title,
-                    self.state.error_message
+                    self.state.error_message,
+                    processing_mode=mode_str
                 ))
                 time.sleep(0.5)
 
@@ -203,7 +297,8 @@ class PodcastTUI:
             live.update(self.ui_renderer.render_processing(
                 self.processing_status,
                 self.processing_title,
-                self.state.error_message
+                self.state.error_message,
+                processing_mode=mode_str
             ))
             time.sleep(2)
 
@@ -214,6 +309,142 @@ class PodcastTUI:
         self.processing_status = None
         self.processing_title = None
         self.state.error_message = None
+        self.state.processing_mode = None
+
+    def process_bulk_episodes(self):
+        """Process multiple episodes sequentially."""
+        if not self.state.bulk_episode_ids:
+            return
+
+        self.console.clear()
+
+        mode = self.state.processing_mode or ProcessingMode.FULL
+        mode_str = mode.value
+        total = len(self.state.bulk_episode_ids)
+
+        for idx, episode_id in enumerate(self.state.bulk_episode_ids):
+            self.state.bulk_current_index = idx
+
+            # Get current episode (refresh from DB for latest status)
+            episode = self.db.get_episode_by_id(episode_id)
+            self.state.processing_episode = episode
+            self.processing_title = episode["title"]
+
+            # Skip if not compatible with mode
+            should_skip = False
+            if mode == ProcessingMode.FULL and episode["status"] == "done":
+                should_skip = True
+            elif mode == ProcessingMode.TRANSCRIBE and episode["status"] in ("done", "transcribed"):
+                should_skip = True
+            elif mode == ProcessingMode.INSIGHTS and episode["status"] != "transcribed":
+                should_skip = True
+
+            if should_skip:
+                continue
+
+            # Initialize status
+            if mode == ProcessingMode.INSIGHTS:
+                self.processing_status = "analyzing"
+            else:
+                self.processing_status = "downloading"
+
+            # Run processing in thread
+            success = False
+            error_msg = None
+
+            def process():
+                nonlocal success, error_msg
+                if mode == ProcessingMode.FULL:
+                    success, error_msg = self.episode_processor.process_single_episode(episode_id)
+                elif mode == ProcessingMode.TRANSCRIBE:
+                    success, error_msg = self.episode_processor.process_transcribe_only(episode_id)
+                elif mode == ProcessingMode.INSIGHTS:
+                    success, error_msg = self.episode_processor.process_insights_only(episode_id)
+
+            thread = threading.Thread(target=process)
+            thread.start()
+
+            # Live update for this episode
+            with Live(
+                self.ui_renderer.render_bulk_processing(
+                    episode, self.processing_status, idx, total,
+                    self.state.bulk_completed_count, mode_str
+                ),
+                console=self.console,
+                refresh_per_second=2
+            ) as live:
+                while thread.is_alive():
+                    live.update(self.ui_renderer.render_bulk_processing(
+                        episode, self.processing_status, idx, total,
+                        self.state.bulk_completed_count, mode_str,
+                        self.state.error_message
+                    ))
+                    time.sleep(0.5)
+
+                thread.join()
+
+                if success:
+                    self.state.bulk_completed_count += 1
+                    self.processing_status = "done"
+                else:
+                    self.processing_status = "error"
+                    self.state.error_message = error_msg
+
+                # Brief pause to show result
+                live.update(self.ui_renderer.render_bulk_processing(
+                    episode, self.processing_status, idx, total,
+                    self.state.bulk_completed_count, mode_str,
+                    self.state.error_message
+                ))
+                time.sleep(1)
+
+            # Reset error message for next episode
+            self.state.error_message = None
+
+        # Show final summary
+        self._show_bulk_complete_summary()
+
+        # Reset state
+        self._reset_bulk_state()
+
+    def _show_bulk_complete_summary(self):
+        """Show summary after bulk processing completes."""
+        from rich.panel import Panel
+        from rich.text import Text
+
+        total = len(self.state.bulk_episode_ids)
+        completed = self.state.bulk_completed_count
+        skipped = total - completed
+
+        self.console.clear()
+        style = "green" if skipped == 0 else "yellow"
+        summary = Panel(
+            Text(
+                f"Bulk processing complete!\n\n"
+                f"Completed: {completed}/{total}\n"
+                f"Skipped/Failed: {skipped}",
+                style=style
+            ),
+            title="Summary",
+            border_style=style
+        )
+        self.console.print(summary)
+        time.sleep(2)
+
+    def _reset_bulk_state(self):
+        """Reset bulk processing state."""
+        self.state.current_view = "episode_list"
+        self.state.bulk_episode_ids = None
+        self.state.bulk_episodes = None
+        self.state.bulk_current_index = 0
+        self.state.bulk_completed_count = 0
+        self.state.bulk_skipped_episodes = None
+        self.state.selected_episode_id = None
+        self.state.processing_episode = None
+        self.processing_status = None
+        self.processing_title = None
+        self.state.error_message = None
+        self.state.processing_mode = None
 
     def confirm_quit(self) -> bool:
         """Show quit confirmation dialog."""
@@ -295,24 +526,29 @@ class PodcastTUI:
                         self.input_buffer = ""
                     elif key == 'l':
                         self.load_more_episodes()
-                    elif key.isdigit() and key != '0':
-                        # Start collecting number input - ALWAYS require Enter
+                    elif key.isdigit() or key == 'a':
+                        # Start collecting input - supports numbers, ranges, and "all"
                         self.input_buffer = key
                         self.console.print(key, end="")
 
-                        # Keep collecting digits until Enter
+                        # Keep collecting valid characters until Enter
                         while True:
                             next_key = self.getch()
-                            if next_key.isdigit():
-                                # Add digit to buffer
+                            if next_key.isdigit() or next_key in (',', '-'):
+                                # Add digit, comma, or hyphen to buffer
+                                self.input_buffer += next_key
+                                self.console.print(next_key, end="")
+                            elif next_key.lower() == 'l' and self.input_buffer.lower() == 'a':
+                                # Complete "al" for "all"
+                                self.input_buffer += next_key
+                                self.console.print(next_key, end="")
+                            elif next_key.lower() == 'l' and self.input_buffer.lower() == 'al':
+                                # Complete "all"
                                 self.input_buffer += next_key
                                 self.console.print(next_key, end="")
                             elif next_key == '\r' or next_key == '\n':
                                 # Enter pressed - execute selection
-                                if self.handle_episode_selection(self.input_buffer):
-                                    self.state.current_view = "processing"
-                                    self.process_episode()
-                                    # process_episode handles returning to episode list
+                                self.handle_episode_selection(self.input_buffer)
                                 break
                             elif next_key == '\x7f' or next_key == '\b':  # Backspace
                                 # Handle backspace
@@ -322,7 +558,7 @@ class PodcastTUI:
                                 if not self.input_buffer:
                                     break
                             elif next_key == 'ESC' or next_key == '\x1b':
-                                # ESC cancels number input
+                                # ESC cancels input
                                 break
                             else:
                                 # Any other key cancels input
@@ -330,13 +566,90 @@ class PodcastTUI:
 
                         self.input_buffer = ""
 
+                elif self.state.current_view == "action_menu":
+                    self.console.clear()
+                    self.console.print(self.ui_renderer.render_action_menu(
+                        self.state.processing_episode
+                    ))
+
+                    key = self.getch()
+
+                    if key == 'ESC' or key == '\x1b':
+                        # Cancel - return to episode list
+                        self.state.current_view = "episode_list"
+                        self.state.selected_episode_id = None
+                        self.state.processing_episode = None
+                        self.state.processing_mode = None
+                    elif key == 'q':
+                        if self.confirm_quit():
+                            break
+                    elif key in ('1', '2'):
+                        if self.handle_action_selection(key):
+                            self.state.current_view = "processing"
+                            self.process_episode()
+
                 elif self.state.current_view == "processing":
                     # Processing is handled when transitioning to this view
                     # Just wait here until processing is done
                     pass
 
+                elif self.state.current_view == "bulk_action_menu":
+                    self.console.clear()
+                    self.console.print(self.ui_renderer.render_bulk_action_menu(
+                        self.state.bulk_episodes
+                    ))
+
+                    key = self.getch()
+
+                    if key == 'ESC' or key == '\x1b':
+                        self._reset_bulk_state()
+                        self.state.current_view = "episode_list"
+                    elif key == 'q':
+                        if self.confirm_quit():
+                            break
+                    elif key in ('1', '2'):
+                        if self.handle_bulk_action_selection(key):
+                            # Check if confirmation needed
+                            if self.state.bulk_skipped_episodes:
+                                self.state.current_view = "bulk_confirm"
+                            else:
+                                self.state.current_view = "bulk_processing"
+                                self.process_bulk_episodes()
+
+                elif self.state.current_view == "bulk_confirm":
+                    self.console.clear()
+                    # Get episodes that will be processed
+                    skipped_ids = set(ep["id"] for ep in (self.state.bulk_skipped_episodes or []))
+                    processing_episodes = [
+                        ep for ep in self.state.bulk_episodes
+                        if ep["id"] not in skipped_ids
+                    ]
+                    self.console.print(self.ui_renderer.render_skip_confirmation(
+                        self.state.bulk_skipped_episodes or [],
+                        processing_episodes
+                    ))
+
+                    key = self.getch()
+
+                    if key == 'ESC' or key == '\x1b':
+                        self._reset_bulk_state()
+                        self.state.current_view = "episode_list"
+                    elif key == '\r' or key == '\n':
+                        # Filter to only processable episodes
+                        self.state.bulk_episode_ids = [ep["id"] for ep in processing_episodes]
+                        self.state.bulk_episodes = processing_episodes
+                        self.state.current_view = "bulk_processing"
+                        self.process_bulk_episodes()
+
             except KeyboardInterrupt:
-                if self.state.current_view == "episode_list":
+                if self.state.current_view in ("action_menu", "bulk_action_menu", "bulk_confirm"):
+                    # Go back to episode list
+                    self._reset_bulk_state()
+                    self.state.current_view = "episode_list"
+                    self.state.selected_episode_id = None
+                    self.state.processing_episode = None
+                    self.state.processing_mode = None
+                elif self.state.current_view == "episode_list":
                     self.state.current_view = "podcast_list"
                     self.state.selected_feed_id = None
                     self.state.selected_feed_name = None

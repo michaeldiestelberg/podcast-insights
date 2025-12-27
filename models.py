@@ -2,8 +2,16 @@
 """Data models for Podcast Insights."""
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import List, Optional
+
+
+class ProcessingMode(Enum):
+    """Processing modes for episode pipeline."""
+    FULL = "full"           # Download + Transcribe + Insights
+    TRANSCRIBE = "transcribe"  # Download + Transcribe only
+    INSIGHTS = "insights"      # Insights only (requires transcript)
 
 
 @dataclass
@@ -49,3 +57,10 @@ class UIState:
     episode_limit: int = 5
     processing_episode: Optional[object] = None  # sqlite3.Row
     error_message: Optional[str] = None
+    processing_mode: Optional[ProcessingMode] = None
+    # Bulk processing state
+    bulk_episode_ids: Optional[List[int]] = None
+    bulk_episodes: Optional[List[object]] = None  # List of sqlite3.Row
+    bulk_current_index: int = 0
+    bulk_completed_count: int = 0
+    bulk_skipped_episodes: Optional[List[object]] = None

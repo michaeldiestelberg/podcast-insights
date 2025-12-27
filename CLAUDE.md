@@ -46,7 +46,17 @@ Single-mode interactive terminal UI for browsing and processing podcast episodes
 - `update.sh`: Tool update script for submodules
 
 ### Processing Pipeline
-User-initiated sequential pipeline: **Select Episode → Download → Transcribe → Extract Insights**
+User-initiated sequential pipeline: **Select Episode → Choose Mode → Download → Transcribe → Extract Insights**
+
+**Processing Modes:**
+- **Full**: Download + Transcribe + Insights (status ends at `done`)
+- **Transcribe only**: Download + Transcribe (status ends at `transcribed`, can add insights later)
+- **Insights only**: Extract insights from existing transcript (for `transcribed` episodes)
+
+**Bulk Processing:**
+- Select multiple episodes: `1,3,5` (comma-separated), `1-5` (range), or `all`
+- Sequential processing with compact progress UI
+- Warns and confirms when episodes will be skipped
 
 Each step:
 - Checks for existing output files (idempotent)
