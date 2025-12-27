@@ -149,10 +149,9 @@ class UIRenderer:
         table.add_row(Text("[ESC] Cancel", style="dim italic"))
 
         return Panel(
-            Align.center(table, vertical="middle"),
+            table,
             title="🎬 Action Menu",
-            border_style="cyan",
-            height=14
+            border_style="cyan"
         )
 
     def render_processing(self, processing_status: str, processing_title: str, error_message: str = None, processing_mode: str = "full") -> Panel:
@@ -214,10 +213,9 @@ class UIRenderer:
             table.add_row(Text("[Ctrl+C] Cancel", style="dim italic"))
 
         return Panel(
-            Align.center(table, vertical="middle"),
+            table,
             title="⚡ Processing Episode",
-            border_style="yellow",
-            height=12
+            border_style="yellow"
         )
 
     @staticmethod
@@ -275,10 +273,9 @@ class UIRenderer:
         table.add_row(Text("[ESC] Cancel", style="dim italic"))
 
         return Panel(
-            Align.center(table, vertical="middle"),
+            table,
             title=f"📦 Bulk Processing - {len(episodes)} episodes",
-            border_style="cyan",
-            height=16
+            border_style="cyan"
         )
 
     def render_skip_confirmation(self, skipped: list, processing: list) -> Panel:
@@ -307,10 +304,9 @@ class UIRenderer:
         table.add_row(Text("[Enter] Continue  [ESC] Cancel", style="bold"))
 
         return Panel(
-            Align.center(table, vertical="middle"),
+            table,
             title="⚠️ Confirm Bulk Processing",
-            border_style="yellow",
-            height=16
+            border_style="yellow"
         )
 
     def render_bulk_processing(
@@ -369,10 +365,9 @@ class UIRenderer:
         table.add_row(Text("[Ctrl+C] Cancel remaining", style="dim italic"))
 
         return Panel(
-            Align.center(table, vertical="middle"),
+            table,
             title=f"⚡ Bulk Processing ({current_index + 1}/{total_count})",
-            border_style="yellow",
-            height=12
+            border_style="yellow"
         )
 
     @staticmethod
